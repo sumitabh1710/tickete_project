@@ -8,6 +8,7 @@ import { Slot } from './inventory/entity/slot.entity';
 import { PaxAvailability } from './inventory/entity/pax-availability.entity';
 import { Price } from './inventory/entity/price.entity';
 import { ScheduleModule } from '@nestjs/schedule/dist';
+import { join } from 'path';
 
 @Module({
   imports: [
@@ -15,14 +16,15 @@ import { ScheduleModule } from '@nestjs/schedule/dist';
     ScheduleModule.forRoot(),
     TypeOrmModule.forRoot({
       type: 'postgres',
-      host: 'dpg-cldhmv6g1b2c73f7i8eg-a',
+      host: 'dpg-cldhmv6g1b2c73f7i8eg-a.oregon-postgres.render.com',
       port: 5432,
       username: 'tickete_project_user',
       password: '1sJBR3lApxpq8HN4AXc8rTA7aONMfmtn',
       database: 'tickete_project',
-      entities: [__dirname + './inventory/entity/.entity{.ts,.js}'],
+      entities: [join(__dirname, './inventory/entity/*.entity{.ts,.js}')],
       autoLoadEntities: true,
       synchronize: true,
+      ssl: true,
     }),
     TypeOrmModule.forFeature([Slot, PaxAvailability, Price]),
   ],
