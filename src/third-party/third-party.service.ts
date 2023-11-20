@@ -3,7 +3,7 @@ import { AxiosResponse } from 'axios';
 import { HttpService } from '@nestjs/axios';
 import { Observable, map } from 'rxjs';
 import { Cron, CronExpression, Timeout, Interval } from '@nestjs/schedule';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository, Transaction } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Slot } from 'src/inventory/entity/slot.entity';
 import { PaxAvailability } from 'src/inventory/entity/pax-availability.entity';
@@ -14,7 +14,7 @@ import axios from 'axios';
 export class ThirdPartyService {
   private readonly logger: Logger = new Logger(ThirdPartyService.name);
   private readonly apiKey = '72f4915e6f47e50f4e7a852cc1697ed3';
-  private readonly rateLimit = 1;
+  private readonly rateLimit = 13;
   private requestCount = 0;
   private isSyncPaused: boolean = false;
 
@@ -104,7 +104,7 @@ export class ThirdPartyService {
 
   private async handleRateLimit() {
     if (this.requestCount >= this.rateLimit) {
-      const waitTime = Math.ceil(2000);
+      const waitTime = Math.ceil(60 * 1000);
       this.logger.debug(
         `Rate limit reached. Waiting for ${waitTime} milliseconds before the next request.`,
       );
@@ -117,6 +117,7 @@ export class ThirdPartyService {
   async getInventoryForPeoduct14(
     date: string,
   ): Promise<Observable<AxiosResponse<any>>> {
+    console.log('14')
     const url = `https://leap-api.tickete.co/api/v1/inventory/14?date=${date}`;
     const headers = { 'x-api-key': this.apiKey };
     try {
@@ -137,6 +138,7 @@ export class ThirdPartyService {
   async getInventoryForPeoduct15(
     date: string,
   ): Promise<Observable<AxiosResponse<any>>> {
+    console.log('15')
     const url = `https://leap-api.tickete.co/api/v1/inventory/15?date=${date}`;
     const headers = { 'x-api-key': this.apiKey };
     try {
@@ -155,56 +157,61 @@ export class ThirdPartyService {
   }
 
   private async storeSlot(slotData: any, productId: number): Promise<void> {
-    const existingSlot = await this.slotRepository.findOne({
-      where: {
+    try {
+      const existingSlot = await this.slotRepository.findOne({
+        where: {
+          providerSlotId: slotData.providerSlotId,
+          productId: productId,
+        },
+      });
+
+      if (existingSlot) {
+        console.log(
+          `Slot with providerSlotId ${slotData.providerSlotId} already exists. Skipping.`,
+        );
+        return;
+      }
+
+      const slot = this.slotRepository.create({
+        startDate: slotData.startDate,
+        startTime: slotData.startTime,
+        endTime: slotData.endTime,
         providerSlotId: slotData.providerSlotId,
+        remaining: slotData.remaining,
+        currencyCode: slotData.currencyCode,
+        variantId: slotData.variantId,
         productId: productId,
-      },
-    });
+      });
 
-    if (existingSlot) {
-      console.log(
-        `Slot with providerSlotId ${slotData.providerSlotId} already exists. Skipping.`,
-      );
+      const savedSlot = await this.slotRepository.save(slot);
+
+      for (const paxData of slotData.paxAvailability) {
+        const price = this.priceRepository.create({
+          discount: paxData.price.discount,
+          finalPrice: paxData.price.finalPrice,
+          originalPrice: paxData.price.originalPrice,
+          currencyCode: paxData.price.currencyCode,
+        });
+
+        await this.priceRepository.save(price);
+
+        const paxAvailability = this.paxAvailabilityRepository.create({
+          max: paxData.max,
+          min: paxData.min,
+          remaining: paxData.remaining,
+          type: paxData.type,
+          isPrimary: paxData.isPrimary,
+          description: paxData.description,
+          name: paxData.name,
+          slot: savedSlot,
+          price: price,
+        });
+
+        await this.paxAvailabilityRepository.save(paxAvailability);
+      }
+    } catch (error) {
+      console.error('Error storing slot:', error.message || error);
       return;
-    }
-
-    const slot = this.slotRepository.create({
-      startDate: slotData.startDate,
-      startTime: slotData.startTime,
-      endTime: slotData.endTime,
-      providerSlotId: slotData.providerSlotId,
-      remaining: slotData.remaining,
-      currencyCode: slotData.currencyCode,
-      variantId: slotData.variantId,
-      productId: productId,
-    });
-
-    const savedSlot = await this.slotRepository.save(slot);
-
-    for (const paxData of slotData.paxAvailability) {
-      const price = this.priceRepository.create({
-        discount: paxData.price.discount,
-        finalPrice: paxData.price.finalPrice,
-        originalPrice: paxData.price.originalPrice,
-        currencyCode: paxData.price.currencyCode,
-      });
-
-      await this.priceRepository.save(price);
-
-      const paxAvailability = this.paxAvailabilityRepository.create({
-        max: paxData.max,
-        min: paxData.min,
-        remaining: paxData.remaining,
-        type: paxData.type,
-        isPrimary: paxData.isPrimary,
-        description: paxData.description,
-        name: paxData.name,
-        slot: savedSlot,
-        price: price,
-      });
-
-      await this.paxAvailabilityRepository.save(paxAvailability);
     }
   }
 }
